@@ -24,34 +24,43 @@ class MatchState:
 
     def update_from_state(self, state_data):
         """Verarbeitet das .state JSON von Autodarts."""
+        if not isinstance(state_data, dict):
+            return
+
         self.variant = state_data.get("variant", self.variant)
         self.raw_state = state_data.get("state", {})
         
-        if "players" in state_data:
-            self.players = [p.get("name", "Unknown") for p in state_data["players"]]
-        if "player" in state_data:
+        if isinstance(state_data.get("players"), list):
+            self.players = [p.get("name", "Unknown") for p in state_data["players"] if isinstance(p, dict)]
+            
+        if isinstance(state_data.get("player"), int):
             self.current_player_idx = state_data["player"]
-        if "scores" in state_data:
+            
+        if isinstance(state_data.get("scores"), list):
             self.scores = state_data["scores"]
-        if "stats" in state_data:
+            
+        if isinstance(state_data.get("stats"), list):
             self.stats = state_data["stats"]
         
-        if "gameScores" in state_data and not state_data.get("finished", False):
+        if isinstance(state_data.get("gameScores"), list) and not state_data.get("finished", False):
             self.points_left = state_data["gameScores"]
             
         guide = self.raw_state.get("checkoutGuide", [])
-        self.checkout_guide = [g.get("name") for g in guide] if guide else []
+        self.checkout_guide = [g.get("name") for g in guide if isinstance(g, dict)] if isinstance(guide, list) else []
             
         self.is_busted = state_data.get("turnBusted", False)
         self.turn_score = state_data.get("turnScore", 0)
             
+        # FIX 5: Defensiver Umgang mit Arrays (turns[-1] war fehleranfällig)
         turns = state_data.get("turns", [])
-        if turns:
+        if isinstance(turns, list) and len(turns) > 0:
             current_turn = turns[-1]
-            throws = current_turn.get("throws", [])
-            self.current_turn_throws = [t.get("segment", {}).get("name", "Miss") for t in throws]
-            if current_turn.get("busted", False):
-                self.is_busted = True
+            if isinstance(current_turn, dict):
+                throws = current_turn.get("throws", [])
+                if isinstance(throws, list):
+                    self.current_turn_throws = [t.get("segment", {}).get("name", "Miss") for t in throws if isinstance(t, dict)]
+                if current_turn.get("busted", False):
+                    self.is_busted = True
         else:
             self.current_turn_throws = []
             
@@ -60,13 +69,13 @@ class MatchState:
         self.match_finished = state_data.get("gameFinished", False)
         
         w_idx = state_data.get("winner", -1)
-        if self.leg_finished and 0 <= w_idx < len(self.players):
+        if self.leg_finished and isinstance(w_idx, int) and 0 <= w_idx < len(self.players):
             self.leg_winner_name = self.players[w_idx]
             if self.variant == "X01" and len(self.points_left) > w_idx:
                 self.points_left[w_idx] = 0
         
         gw_idx = state_data.get("gameWinner", -1)
-        if self.match_finished and 0 <= gw_idx < len(self.players):
+        if self.match_finished and isinstance(gw_idx, int) and 0 <= gw_idx < len(self.players):
             self.match_winner_name = self.players[gw_idx]
 
     def get_player_name(self, idx):
@@ -80,5 +89,6 @@ class MatchState:
     def get_player_average(self, idx):
         if self.stats and len(self.stats) > idx:
             s = self.stats[idx].get("matchStats", {})
-            return round(s.get("average", 0), 2)
+            if isinstance(s, dict):
+                return round(s.get("average", 0), 2)
         return 0

@@ -6,6 +6,7 @@ import logging
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN, URL_WEBSOCKET
 from .models import MatchState
@@ -39,7 +40,8 @@ class AutodartsCoordinator(DataUpdateCoordinator):
 
     async def async_start(self):
         """Startet die HTTP Session und den WebSocket Task."""
-        self.session = aiohttp.ClientSession()
+        # FIX 3: HA Best-Practice Session Nutzung
+        self.session = async_get_clientsession(self.hass)
         self.api = AutodartsApiClient(self.hass, self._email, self._password, self.session)
         self._websocket_task = self.hass.async_create_task(self._websocket_listener())
 
@@ -51,8 +53,7 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                 await self._websocket_task
             except asyncio.CancelledError:
                 pass
-        if self.session:
-            await self.session.close()
+        # Session darf hier NICHT geschlossen werden, da async_get_clientsession von HA verwaltet wird!
 
     async def _websocket_listener(self):
         """Der permanente Listener für die Autodarts Cloud."""
@@ -75,7 +76,13 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                     
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
-                            payload = json.loads(msg.data)
+                            try:
+                                # FIX 4: Defensives JSON-Parsing
+                                payload = json.loads(msg.data)
+                            except json.JSONDecodeError:
+                                _LOGGER.debug("Ignoriere kaputte JSON-Payload vom Server: %s", msg.data)
+                                continue
+                                
                             channel = payload.get("channel")
                             topic = payload.get("topic", "")
                             data = payload.get("data", {})
@@ -133,7 +140,7 @@ class AutodartsCoordinator(DataUpdateCoordinator):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                _LOGGER.error("WebSocket Fehler: %s. Reconnect...", e)
+                _LOGGER.error("WebSocket Fehler: %s. Reconnect in 5 Sekunden...", e)
                 self.last_update_success = False
                 self.async_update_listeners()
                 await asyncio.sleep(5)
