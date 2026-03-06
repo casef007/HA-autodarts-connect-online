@@ -12,7 +12,7 @@
       }
     },
     "error": {
-      "invalid_auth": "Invalid authentication. Please check email and password."
+      "invalid_auth": "Incomplete input. Please provide email and password."
     },
     "abort": {
       "already_configured": "This Board ID is already configured."

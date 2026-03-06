@@ -12,7 +12,7 @@
       }
     },
     "error": {
-      "invalid_auth": "Ungültige Zugangsdaten. Bitte E-Mail und Passwort prüfen."
+      "invalid_auth": "Eingabe unvollständig. Bitte fülle E-Mail und Passwort aus."
     },
     "abort": {
       "already_configured": "Diese Board ID wurde bereits eingerichtet."
