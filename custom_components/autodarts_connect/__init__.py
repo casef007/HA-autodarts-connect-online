@@ -1,4 +1,4 @@
-"""Die Autodarts Connect Online Integration - Fixed Full Version."""
+"""Die Autodarts Connect Online Integration."""
 import asyncio
 import aiohttp
 import json
@@ -36,7 +36,6 @@ class MatchState:
         self.raw_state = {}
 
     def update_from_state(self, state_data):
-        """Verarbeitet das .state JSON von Autodarts."""
         self.variant = state_data.get("variant", self.variant)
         self.raw_state = state_data.get("state", {})
         
@@ -96,11 +95,13 @@ class MatchState:
             return round(s.get("average", 0), 2)
         return 0
 
+
 class AutodartsCoordinator(DataUpdateCoordinator):
-    """Zentrale Klasse zur Steuerung der Autodarts-Verbindung."""
     def __init__(self, hass, email, password, board_id):
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=None)
-        self.email, self.password, self.board_id = email, password, board_id
+        self.email = email
+        self.password = password
+        self.board_id = board_id
         self.data = MatchState()
         self.token = None
         self._websocket_task = None
@@ -114,20 +115,24 @@ class AutodartsCoordinator(DataUpdateCoordinator):
             name="Autodarts Board",
             manufacturer="Autodarts.io",
             model="Smart Board Online",
-            sw_version="1.1.2",
         )
 
     async def _async_update_data(self):
-        """Diese Methode MUSS vorhanden sein für den first_refresh."""
         return self.data
 
     async def async_start(self):
         self.session = aiohttp.ClientSession()
-        self._websocket_task = self.hass.loop.create_task(self._websocket_listener())
+        # FIX 1: HA-Standard Task Creation
+        self._websocket_task = self.hass.async_create_task(self._websocket_listener())
 
     async def async_stop(self):
+        # FIX 2: Sauberer Cleanup mit Cancellation
         if self._websocket_task:
             self._websocket_task.cancel()
+            try:
+                await self._websocket_task
+            except asyncio.CancelledError:
+                pass
         if self.session:
             await self.session.close()
 
@@ -140,6 +145,7 @@ class AutodartsCoordinator(DataUpdateCoordinator):
             return None
 
         try:
+            # Hier belassen wir timeout, da externe API
             async with self.session.get(URL_CREDENTIALS, timeout=10) as resp:
                 if resp.status == 200:
                     creds = await resp.json()
@@ -156,7 +162,8 @@ class AutodartsCoordinator(DataUpdateCoordinator):
         if not c_id: return None
         d = {"client_id": c_id, "client_secret": c_sec, "grant_type": "password", "username": self.email, "password": self.password}
         try:
-            async with self.session.post(URL_TOKEN, data=d, ssl=False, timeout=10) as resp:
+            # FIX 3: ssl=False entfernt, da Autodarts gültige Zertifikate hat
+            async with self.session.post(URL_TOKEN, data=d, timeout=10) as resp:
                 if resp.status == 200: return (await resp.json())["access_token"]
         except Exception as e:
             _LOGGER.error("Login Fehler: %s", e)
@@ -166,7 +173,8 @@ class AutodartsCoordinator(DataUpdateCoordinator):
         url = URL_REST_STATE.format(match_id)
         headers = {"Authorization": f"Bearer {self.token}"}
         try:
-            async with self.session.get(url, headers=headers, ssl=False, timeout=10) as resp:
+            # FIX 3: ssl=False entfernt
+            async with self.session.get(url, headers=headers, timeout=10) as resp:
                 if resp.status == 200:
                     self.data.update_from_state(await resp.json())
                     self.async_set_updated_data(self.data)
@@ -176,11 +184,18 @@ class AutodartsCoordinator(DataUpdateCoordinator):
         while True:
             self.token = await self._get_access_token()
             if not self.token:
-                await asyncio.sleep(30); continue
+                self.last_update_success = False # FIX 4: Availability auf False
+                self.async_update_listeners()
+                await asyncio.sleep(30)
+                continue
             
             try:
-                async with self.session.ws_connect(URL_WEBSOCKET, headers={"Authorization": f"Bearer {self.token}"}, ssl=False, heartbeat=30) as ws:
+                # FIX 3: ssl=False entfernt
+                async with self.session.ws_connect(URL_WEBSOCKET, headers={"Authorization": f"Bearer {self.token}"}, heartbeat=30) as ws:
                     _LOGGER.info("Autodarts WebSocket verbunden!")
+                    self.last_update_success = True # FIX 4: Availability auf True
+                    self.async_update_listeners()
+                    
                     await ws.send_json({"channel": "autodarts.boards", "type": "subscribe", "topic": f"{self.board_id}.events"})
                     await ws.send_json({"channel": "autodarts.boards", "type": "subscribe", "topic": f"{self.board_id}.matches"})
                     
@@ -207,25 +222,38 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                                 ev = data.get("event")
                                 if ev == "start":
                                     self.data.match_id = data.get("id")
+                                    self.hass.bus.async_fire("autodarts_match_started", {"board": self.board_id}) # NEUES EVENT
                                     await self._fetch_initial_match_state(self.data.match_id)
                                     await ws.send_json({"channel": "autodarts.matches", "type": "subscribe", "topic": f"{self.data.match_id}.state"})
-                                elif ev == "delete":
+                                elif ev == "delete" or ev == "finish":
+                                    self.hass.bus.async_fire("autodarts_match_finished", {"board": self.board_id}) # NEUES EVENT
                                     self.data = MatchState()
                                     self.async_set_updated_data(self.data)
 
                             elif channel == "autodarts.matches" and topic.endswith(".state"):
                                 old_finished = self.data.leg_finished
                                 old_busted = self.data.is_busted
+                                old_player = self.data.current_player_idx
+                                
                                 self.data.update_from_state(data)
+                                
+                                if self.data.current_player_idx != old_player:
+                                    self.hass.bus.async_fire("autodarts_turn_started", {"player": self.data.get_player_name(self.data.current_player_idx)}) # NEUES EVENT
                                 if self.data.leg_finished and not old_finished:
                                     self.hass.bus.async_fire("autodarts_leg_won", {"winner": self.data.leg_winner_name})
                                 if self.data.is_busted and not old_busted:
                                     self.hass.bus.async_fire("autodarts_busted", {"player": self.data.get_player_name(self.data.current_player_idx)})
+                                
                                 self.async_set_updated_data(self.data)
                                 
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 _LOGGER.error("WebSocket Fehler: %s. Reconnect...", e)
+                self.last_update_success = False # FIX 4: Availability auf False
+                self.async_update_listeners()
                 await asyncio.sleep(5)
+
 
 async def async_setup(hass, config):
     hass.data.setdefault(DOMAIN, {})
@@ -233,7 +261,6 @@ async def async_setup(hass, config):
 
 async def async_setup_entry(hass, entry):
     coord = AutodartsCoordinator(hass, entry.data["email"], entry.data["password"], entry.data["board_id"])
-    # Hier lag der Fehler: async_config_entry_first_refresh braucht _async_update_data!
     await coord.async_config_entry_first_refresh()
     await coord.async_start()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coord
@@ -241,6 +268,8 @@ async def async_setup_entry(hass, entry):
     return True
 
 async def async_unload_entry(hass, entry):
+    # FIX 5: Der kritische Stop-Bug wurde hier mit await behoben!
     if unload_ok := await hass.config_entries.async_forward_entry_unload(entry, "sensor"):
-        hass.data[DOMAIN].pop(entry.entry_id).async_stop()
+        coord = hass.data[DOMAIN].pop(entry.entry_id)
+        await coord.async_stop()
     return unload_ok
