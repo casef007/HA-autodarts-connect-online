@@ -12,7 +12,7 @@
       }
     },
     "error": {
-      "incomplete_input": "Incomplete input. Please provide email and password."
+      "incomplete_input": "Incomplete input. Please provide email, password, and Board ID."
     },
     "abort": {
       "already_configured": "This Board ID is already configured."
