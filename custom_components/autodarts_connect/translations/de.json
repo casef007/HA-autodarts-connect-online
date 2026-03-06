@@ -12,7 +12,7 @@
       }
     },
     "error": {
-      "invalid_auth": "Eingabe unvollständig. Bitte fülle E-Mail und Passwort aus."
+      "incomplete_input": "Eingabe unvollständig. Bitte fülle E-Mail und Passwort aus."
     },
     "abort": {
       "already_configured": "Diese Board ID wurde bereits eingerichtet."
