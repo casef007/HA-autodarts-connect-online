@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Autodarts Board",
+        "description": "Enter your Autodarts.io credentials and the Board ID you want to track.",
+        "data": {
+          "email": "Email Address",
+          "password": "Password",
+          "board_id": "Board ID (e.g. 8aef1df6-...)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid authentication. Please check email and password."
+    },
+    "abort": {
+      "already_configured": "This Board ID is already configured."
+    }
+  }
+}
