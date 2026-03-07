@@ -18,6 +18,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         AutodartsSensor(coord, "Current Score", "mdi:scoreboard", lambda d: d.get_player_score(d.current_player_idx)),
         AutodartsSensor(coord, "Turn Score", "mdi:counter", lambda d: d.turn_score),
         AutodartsSensor(coord, "Darts Left", "mdi:numeric-3-circle", lambda d: d.darts_left),
+        # NEU: GEWINNER SENSOREN
+        AutodartsSensor(coord, "Leg Winner", "mdi:trophy", lambda d: d.leg_winner_name if d.leg_winner_name else "None"),
+        AutodartsSensor(coord, "Match Winner", "mdi:trophy-award", lambda d: d.match_winner_name if d.match_winner_name else "None"),
     ]
     
     # 2. GRANULARE WURF- UND CHECKOUT-SENSOREN (Dart 1-3)
