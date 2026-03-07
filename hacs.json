@@ -1,7 +1,7 @@
 {
   "name": "Autodarts Connect Online",
-  "content_in_root": false,
   "zip_release": false,
-  "render_readme": true,
-  "manifest": "custom_components/autodarts_connect/manifest.json"
+  "hide_default_branch": false,
+  "homeassistant": "2024.1.0",
+  "hacs": "1.32.0"
 }
