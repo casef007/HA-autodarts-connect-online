@@ -40,10 +40,11 @@ class MatchState:
 
     @property
     def checkout_possible(self):
+        # FIX: Prüft nun, ob genug Darts für den vorgeschlagenen Checkout übrig sind!
         return (len(self.checkout_guide) > 0 
                 and self.current_player_is_local 
                 and not self.leg_finished 
-                and self.darts_left > 0)
+                and self.darts_left >= len(self.checkout_guide))
 
     @property
     def takeout_needed(self):
