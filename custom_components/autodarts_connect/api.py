@@ -1,4 +1,5 @@
 """API-Client für die Kommunikation mit den Autodarts-Servern."""
+import asyncio
 import aiohttp
 import json
 import os
@@ -63,10 +64,18 @@ class AutodartsApiClient:
         """Holt den Status eines frisch gestarteten Matches via REST."""
         url = URL_REST_STATE.format(match_id)
         headers = {"Authorization": f"Bearer {token}"}
-        try:
-            async with self.session.get(url, headers=headers, timeout=10) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-        except Exception as e:
-            _LOGGER.error("Fehler beim Abrufen des initialen Match-States: %s", e)
+        
+        # FIX: Retry-Logik! Die Autodarts REST-API hinkt dem WebSocket oft 1-2 Sekunden hinterher.
+        for attempt in range(4):
+            try:
+                async with self.session.get(url, headers=headers, timeout=10) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+            except Exception as e:
+                _LOGGER.debug("Initial State noch nicht bereit (Versuch %s): %s", attempt + 1, e)
+            
+            # 1 Sekunde warten und nochmal probieren
+            await asyncio.sleep(1)
+            
+        _LOGGER.warning("Konnte initialen Match-State für %s nach 4 Versuchen nicht laden.", match_id)
         return None
