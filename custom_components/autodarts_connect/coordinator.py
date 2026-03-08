@@ -44,7 +44,7 @@ class AutodartsCoordinator(DataUpdateCoordinator):
         self.session = async_get_clientsession(self.hass)
         self.api = AutodartsApiClient(self.hass, self._email, self._password, self.session)
         
-        # FIX: async_create_background_task verhindert, dass der HA-Start blockiert wird!
+        # async_create_background_task verhindert, dass der HA-Start blockiert wird!
         self._websocket_task = self.hass.async_create_background_task(
             self._websocket_listener(),
             "autodarts_websocket_listener"
@@ -117,6 +117,18 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                                     initial_state = await self.api.fetch_initial_match_state(self.data.match_id, token)
                                     if initial_state:
                                         self.data.update_from_state(initial_state)
+                                        
+                                        # NEU: Prüfen, ob der Start-Spieler lokal ist!
+                                        players = initial_state.get("players", [])
+                                        if isinstance(players, list) and len(players) > self.data.current_player_idx:
+                                            current_player_data = players[self.data.current_player_idx]
+                                            if isinstance(current_player_data, dict):
+                                                self.data.current_player_is_local = (current_player_data.get("boardId") == self.board_id)
+                                            else:
+                                                self.data.current_player_is_local = False
+                                        else:
+                                            self.data.current_player_is_local = False
+                                            
                                         self.async_set_updated_data(self.data)
                                         
                                     await ws.send_json({"channel": "autodarts.matches", "type": "subscribe", "topic": f"{self.data.match_id}.state"})
@@ -133,7 +145,7 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                                 
                                 self.data.update_from_state(data)
                                 
-                                # NEU: Prüfen, ob der aktuelle Spieler lokal ist
+                                # Prüfen, ob der aktuelle Spieler lokal ist
                                 players = data.get("players", [])
                                 if isinstance(players, list) and len(players) > self.data.current_player_idx:
                                     current_player_data = players[self.data.current_player_idx]
