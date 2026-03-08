@@ -40,10 +40,15 @@ class AutodartsCoordinator(DataUpdateCoordinator):
 
     async def async_start(self):
         """Startet die HTTP Session und den WebSocket Task."""
-        # FIX 3: HA Best-Practice Session Nutzung
+        # HA Best-Practice Session Nutzung
         self.session = async_get_clientsession(self.hass)
         self.api = AutodartsApiClient(self.hass, self._email, self._password, self.session)
-        self._websocket_task = self.hass.async_create_task(self._websocket_listener())
+        
+        # FIX: async_create_background_task verhindert, dass der HA-Start blockiert wird!
+        self._websocket_task = self.hass.async_create_background_task(
+            self._websocket_listener(),
+            "autodarts_websocket_listener"
+        )
 
     async def async_stop(self):
         """Beendet alle Verbindungen sauber beim Entladen."""
@@ -77,7 +82,7 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
-                                # FIX 4: Defensives JSON-Parsing
+                                # Defensives JSON-Parsing
                                 payload = json.loads(msg.data)
                             except json.JSONDecodeError:
                                 _LOGGER.debug("Ignoriere kaputte JSON-Payload vom Server: %s", msg.data)
