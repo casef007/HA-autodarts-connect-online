@@ -21,8 +21,45 @@ class MatchState:
         self.turn_score = 0
         self.darts_left = 3
         self.raw_state = {}
-        self.current_player_is_local = False # NEU: Lokal oder Online
+        self.current_player_is_local = False # Lokal oder Online
 
+    # ==========================================
+    # AUTOMATISIERUNGS-HELFER (SMARTE SENSOREN)
+    # ==========================================
+    @property
+    def ready_to_throw(self):
+        """True, wenn der lokale Spieler am Board steht und werfen darf."""
+        if not self.current_player_is_local or self.leg_finished or self.match_finished:
+            return False
+        if self.darts_left <= 0:
+            return False
+        if self.board_status in ["Takeout started", "Takeout finished"]:
+            return False
+        return True
+
+    @property
+    def checkout_possible(self):
+        """True, wenn der lokale Spieler mit den restlichen Darts das Leg beenden kann."""
+        return (len(self.checkout_guide) > 0 
+                and self.current_player_is_local 
+                and not self.leg_finished 
+                and self.darts_left > 0)
+
+    @property
+    def takeout_needed(self):
+        """True, wenn Darts im Board stecken und gezogen werden müssen."""
+        needs_pull = (self.darts_left == 0 or self.is_busted or self.leg_finished)
+        not_pulled = self.board_status not in ["Takeout finished", "Manual reset", "Started"]
+        return needs_pull and not_pulled
+
+    @property
+    def waiting_for_opponent(self):
+        """True, wenn ein Online-Gegner oder Bot am Zug ist."""
+        return not self.current_player_is_local and not self.match_finished
+
+    # ==========================================
+    # DATEN-UPDATE LOGIK
+    # ==========================================
     def update_from_state(self, state_data):
         """Verarbeitet das .state JSON von Autodarts."""
         if not isinstance(state_data, dict):
