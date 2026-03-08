@@ -28,11 +28,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         AutodartsSensor(coord, "Match Winner", "mdi:trophy-award", lambda d: d.match_winner_name if d.match_winner_name else "None"),
         AutodartsSensor(coord, "Current Player Is Local", "mdi:home-account", lambda d: getattr(d, 'current_player_is_local', False)),
         
-        # NEU: AUTOMATISIERUNGS-HELFER
+        # AUTOMATISIERUNGS-HELFER
         AutodartsSensor(coord, "Ready To Throw", "mdi:target-account", lambda d: getattr(d, 'ready_to_throw', False)),
         AutodartsSensor(coord, "Checkout Possible", "mdi:bullseye-arrow", lambda d: getattr(d, 'checkout_possible', False)),
         AutodartsSensor(coord, "Takeout Needed", "mdi:hand-back-right", lambda d: getattr(d, 'takeout_needed', False)),
         AutodartsSensor(coord, "Waiting For Opponent", "mdi:account-clock", lambda d: getattr(d, 'waiting_for_opponent', False)),
+        AutodartsSensor(coord, "Current Player Won", "mdi:trophy-outline", lambda d: getattr(d, 'current_player_won_match_or_leg', False)),
     ]
     
     # ==========================================
@@ -79,7 +80,6 @@ class AutodartsSensor(CoordinatorEntity, SensorEntity):
     
     @property
     def native_value(self): 
-        # Führt die Lambda-Funktion sicher aus
         try:
             return self._value_fn(self.coordinator.data)
         except Exception:
