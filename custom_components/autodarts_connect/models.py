@@ -2,7 +2,8 @@
 
 class MatchState:
     """Hält den aktuellen Status und die Logik eines Dart-Matches."""
-    def __init__(self):
+    def __init__(self, board_id=None):
+        self.board_id = board_id  # NEU: Das Modell kennt jetzt seine eigene Board-ID
         self.match_id = None
         self.variant = "Unknown"  
         self.players = []
@@ -21,7 +22,7 @@ class MatchState:
         self.turn_score = 0
         self.darts_left = 3
         self.raw_state = {}
-        self.current_player_is_local = False # Lokal oder Online
+        self.current_player_is_local = False
 
     # ==========================================
     # AUTOMATISIERUNGS-HELFER (SMARTE SENSOREN)
@@ -57,6 +58,18 @@ class MatchState:
         """True, wenn ein Online-Gegner oder Bot am Zug ist."""
         return not self.current_player_is_local and not self.match_finished
 
+    @property
+    def current_player_won_match_or_leg(self):
+        """True, wenn der aktuelle (lokale) Spieler das Leg oder Match gewonnen hat."""
+        if not self.current_player_is_local:
+            return False
+        current_name = self.get_player_name(self.current_player_idx)
+        if self.match_finished and self.match_winner_name == current_name:
+            return True
+        if self.leg_finished and self.leg_winner_name == current_name:
+            return True
+        return False
+
     # ==========================================
     # DATEN-UPDATE LOGIK
     # ==========================================
@@ -73,6 +86,17 @@ class MatchState:
             
         if isinstance(state_data.get("player"), int):
             self.current_player_idx = state_data["player"]
+            
+        # NEU: Lokal-Check zu 100% wasserdicht im Kernmodell verankert
+        raw_players = state_data.get("players", [])
+        if self.board_id and isinstance(raw_players, list) and len(raw_players) > self.current_player_idx:
+            p_data = raw_players[self.current_player_idx]
+            if isinstance(p_data, dict):
+                self.current_player_is_local = (p_data.get("boardId") == self.board_id)
+            else:
+                self.current_player_is_local = False
+        else:
+            self.current_player_is_local = False
             
         if isinstance(state_data.get("scores"), list):
             self.scores = state_data["scores"]
