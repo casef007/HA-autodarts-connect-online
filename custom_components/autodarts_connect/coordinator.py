@@ -54,16 +54,27 @@ class AutodartsCoordinator(DataUpdateCoordinator):
             except asyncio.CancelledError:
                 pass
 
-    async def _async_fetch_initial_state(self, match_id, token):
-        """Hintergrund-Task: Lädt die Startdaten, OHNE den WebSocket zu blockieren!"""
-        initial_state = await self.api.fetch_initial_match_state(match_id, token)
+    async def _async_fetch_initial_state(self, match_id):
+        """Hintergrund-Task: Lädt die Startdaten mit GARANTIERT frischem Token!"""
+        # FIX: Zwingend ein frisches Token holen, da das WS-Token bei Folgematches abgelaufen ist!
+        fresh_token = await self.api.get_access_token()
+        if not fresh_token:
+            _LOGGER.warning("Konnte kein frisches Token für Initial-State holen.")
+            return
+
+        initial_state = await self.api.fetch_initial_match_state(match_id, fresh_token)
+        
+        # Nur updaten, wenn wir noch im selben Match sind
         if initial_state and self.data.match_id == match_id:
-            self.data.update_from_state(initial_state)
-            self.hass.bus.async_fire("autodarts_turn_started", {
-                "player": self.data.get_player_name(self.data.current_player_idx),
-                "is_local": self.data.current_player_is_local
-            })
-            self.async_set_updated_data(self.data)
+            # SCHUTZ: Wenn der Spieler extrem schnell war und schon geworfen hat,
+            # dürfen wir den echten Live-Status nicht mehr mit den REST-Startdaten überschreiben!
+            if len(self.data.current_turn_throws) == 0 and self.data.turn_score == 0:
+                self.data.update_from_state(initial_state)
+                self.hass.bus.async_fire("autodarts_turn_started", {
+                    "player": self.data.get_player_name(self.data.current_player_idx),
+                    "is_local": self.data.current_player_is_local
+                })
+                self.async_set_updated_data(self.data)
 
     async def _websocket_listener(self):
         while True:
@@ -121,9 +132,9 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                                         # SOFORT subscriben!
                                         await ws.send_json({"channel": "autodarts.matches", "type": "subscribe", "topic": f"{self.data.match_id}.state"})
                                         
-                                        # REST API im Hintergrund starten (Blockiert nicht mehr!)
+                                        # REST API im Hintergrund starten (ohne das alte Token zu übergeben!)
                                         self.hass.async_create_background_task(
-                                            self._async_fetch_initial_state(self.data.match_id, token),
+                                            self._async_fetch_initial_state(self.data.match_id),
                                             f"autodarts_fetch_{self.data.match_id}"
                                         )
                                         
