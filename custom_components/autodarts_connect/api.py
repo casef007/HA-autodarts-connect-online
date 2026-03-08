@@ -19,7 +19,6 @@ class AutodartsApiClient:
         self.cache_file = hass.config.path(".autodarts_connect_creds.json")
 
     async def _fetch_client_credentials(self):
-        """Holt die geheimen Client-Credentials vom Hilfs-Server oder aus dem Cache."""
         def _save_creds(path, data):
             with open(path, "w", encoding="utf-8") as f: json.dump(data, f)
         def _load_creds(path):
@@ -61,21 +60,20 @@ class AutodartsApiClient:
         return None
 
     async def fetch_initial_match_state(self, match_id, token):
-        """Holt den Status eines frisch gestarteten Matches via REST."""
+        """Holt den Status eines frisch gestarteten Matches via REST (mit Retry-Logik)."""
         url = URL_REST_STATE.format(match_id)
         headers = {"Authorization": f"Bearer {token}"}
         
-        # FIX: Retry-Logik! Die Autodarts REST-API hinkt dem WebSocket oft 1-2 Sekunden hinterher.
-        for attempt in range(4):
+        # Auf 10 Versuche erhöht, da dieser Task im Hintergrund läuft und nichts mehr blockiert
+        for attempt in range(10):
             try:
                 async with self.session.get(url, headers=headers, timeout=10) as resp:
                     if resp.status == 200:
                         return await resp.json()
             except Exception as e:
-                _LOGGER.debug("Initial State noch nicht bereit (Versuch %s): %s", attempt + 1, e)
+                pass
             
-            # 1 Sekunde warten und nochmal probieren
             await asyncio.sleep(1)
             
-        _LOGGER.warning("Konnte initialen Match-State für %s nach 4 Versuchen nicht laden.", match_id)
+        _LOGGER.warning("Konnte initialen Match-State für %s nach 10 Versuchen nicht laden.", match_id)
         return None
