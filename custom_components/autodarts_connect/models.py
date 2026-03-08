@@ -21,6 +21,7 @@ class MatchState:
         self.turn_score = 0
         self.darts_left = 3
         self.raw_state = {}
+        self.current_player_is_local = False # NEU: Lokal oder Online
 
     def update_from_state(self, state_data):
         """Verarbeitet das .state JSON von Autodarts."""
@@ -51,7 +52,6 @@ class MatchState:
         self.is_busted = state_data.get("turnBusted", False)
         self.turn_score = state_data.get("turnScore", 0)
             
-        # FIX 5: Defensiver Umgang mit Arrays (turns[-1] war fehleranfällig)
         turns = state_data.get("turns", [])
         if isinstance(turns, list) and len(turns) > 0:
             current_turn = turns[-1]
