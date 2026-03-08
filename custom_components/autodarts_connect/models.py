@@ -3,7 +3,7 @@
 class MatchState:
     """Hält den aktuellen Status und die Logik eines Dart-Matches."""
     def __init__(self, board_id=None):
-        self.board_id = board_id  # NEU: Das Modell kennt jetzt seine eigene Board-ID
+        self.board_id = board_id
         self.match_id = None
         self.variant = "Unknown"  
         self.players = []
@@ -23,13 +23,13 @@ class MatchState:
         self.darts_left = 3
         self.raw_state = {}
         self.current_player_is_local = False
+        self.raw_players = [] # Interner Speicher für die Spielerdaten
 
     # ==========================================
     # AUTOMATISIERUNGS-HELFER (SMARTE SENSOREN)
     # ==========================================
     @property
     def ready_to_throw(self):
-        """True, wenn der lokale Spieler am Board steht und werfen darf."""
         if not self.current_player_is_local or self.leg_finished or self.match_finished:
             return False
         if self.darts_left <= 0:
@@ -40,7 +40,6 @@ class MatchState:
 
     @property
     def checkout_possible(self):
-        """True, wenn der lokale Spieler mit den restlichen Darts das Leg beenden kann."""
         return (len(self.checkout_guide) > 0 
                 and self.current_player_is_local 
                 and not self.leg_finished 
@@ -48,19 +47,16 @@ class MatchState:
 
     @property
     def takeout_needed(self):
-        """True, wenn Darts im Board stecken und gezogen werden müssen."""
         needs_pull = (self.darts_left == 0 or self.is_busted or self.leg_finished)
         not_pulled = self.board_status not in ["Takeout finished", "Manual reset", "Started"]
         return needs_pull and not_pulled
 
     @property
     def waiting_for_opponent(self):
-        """True, wenn ein Online-Gegner oder Bot am Zug ist."""
         return not self.current_player_is_local and not self.match_finished
 
     @property
     def current_player_won_match_or_leg(self):
-        """True, wenn der aktuelle (lokale) Spieler das Leg oder Match gewonnen hat."""
         if not self.current_player_is_local:
             return False
         current_name = self.get_player_name(self.current_player_idx)
@@ -71,73 +67,85 @@ class MatchState:
         return False
 
     # ==========================================
-    # DATEN-UPDATE LOGIK
+    # DATEN-UPDATE LOGIK (Bulletproof Partial Updates)
     # ==========================================
     def update_from_state(self, state_data):
-        """Verarbeitet das .state JSON von Autodarts."""
         if not isinstance(state_data, dict):
             return
 
-        self.variant = state_data.get("variant", self.variant)
-        self.raw_state = state_data.get("state", {})
-        
-        if isinstance(state_data.get("players"), list):
-            self.players = [p.get("name", "Unknown") for p in state_data["players"] if isinstance(p, dict)]
+        if "variant" in state_data: 
+            self.variant = state_data["variant"]
+        if "state" in state_data: 
+            self.raw_state = state_data["state"]
             
-        if isinstance(state_data.get("player"), int):
+        # 1. SPIELER & LOKAL-CHECK (Nur updaten, wenn explizit im Payload)
+        if "players" in state_data:
+            self.raw_players = state_data["players"]
+            self.players = [p.get("name", "Unknown") for p in self.raw_players if isinstance(p, dict)]
+            
+        if "player" in state_data:
             self.current_player_idx = state_data["player"]
             
-        # NEU: Lokal-Check zu 100% wasserdicht im Kernmodell verankert
-        raw_players = state_data.get("players", [])
-        if self.board_id and isinstance(raw_players, list) and len(raw_players) > self.current_player_idx:
-            p_data = raw_players[self.current_player_idx]
+        # Lokal-Check führt er JEDES MAL aus, nutzt aber die sicher gespeicherten raw_players
+        if isinstance(self.raw_players, list) and len(self.raw_players) > self.current_player_idx:
+            p_data = self.raw_players[self.current_player_idx]
             if isinstance(p_data, dict):
                 self.current_player_is_local = (p_data.get("boardId") == self.board_id)
             else:
                 self.current_player_is_local = False
-        else:
-            self.current_player_is_local = False
-            
-        if isinstance(state_data.get("scores"), list):
+                
+        # 2. SCORES & STATS
+        if "scores" in state_data: 
             self.scores = state_data["scores"]
-            
-        if isinstance(state_data.get("stats"), list):
+        if "stats" in state_data: 
             self.stats = state_data["stats"]
         
-        if isinstance(state_data.get("gameScores"), list) and not state_data.get("finished", False):
+        if "gameScores" in state_data and not state_data.get("finished", False):
             self.points_left = state_data["gameScores"]
             
-        guide = self.raw_state.get("checkoutGuide", [])
-        self.checkout_guide = [g.get("name") for g in guide if isinstance(g, dict)] if isinstance(guide, list) else []
+        if "state" in state_data:
+            guide = self.raw_state.get("checkoutGuide", [])
+            self.checkout_guide = [g.get("name") for g in guide if isinstance(g, dict)] if isinstance(guide, list) else []
             
-        self.is_busted = state_data.get("turnBusted", False)
-        self.turn_score = state_data.get("turnScore", 0)
+        # 3. AKTUELLER WURF
+        if "turnBusted" in state_data: 
+            self.is_busted = state_data["turnBusted"]
+        if "turnScore" in state_data: 
+            self.turn_score = state_data["turnScore"]
             
-        turns = state_data.get("turns", [])
-        if isinstance(turns, list) and len(turns) > 0:
-            current_turn = turns[-1]
-            if isinstance(current_turn, dict):
-                throws = current_turn.get("throws", [])
-                if isinstance(throws, list):
-                    self.current_turn_throws = [t.get("segment", {}).get("name", "Miss") for t in throws if isinstance(t, dict)]
-                if current_turn.get("busted", False):
-                    self.is_busted = True
-        else:
-            self.current_turn_throws = []
-            
-        self.darts_left = 0 if (self.is_busted or state_data.get("finished", False)) else max(0, 3 - len(self.current_turn_throws))
-        self.leg_finished = state_data.get("finished", False)
-        self.match_finished = state_data.get("gameFinished", False)
+        if "turns" in state_data:
+            turns = state_data["turns"]
+            if isinstance(turns, list) and len(turns) > 0:
+                current_turn = turns[-1]
+                if isinstance(current_turn, dict):
+                    throws = current_turn.get("throws", [])
+                    if isinstance(throws, list):
+                        self.current_turn_throws = [t.get("segment", {}).get("name", "Miss") for t in throws if isinstance(t, dict)]
+                    if current_turn.get("busted", False):
+                        self.is_busted = True
+            else:
+                self.current_turn_throws = []
+                
+        # Darts Left wird basierend auf dem aktuellen Stand berechnet
+        self.darts_left = 0 if (self.is_busted or state_data.get("finished", self.leg_finished)) else max(0, 3 - len(self.current_turn_throws))
         
-        w_idx = state_data.get("winner", -1)
-        if self.leg_finished and isinstance(w_idx, int) and 0 <= w_idx < len(self.players):
-            self.leg_winner_name = self.players[w_idx]
-            if self.variant == "X01" and len(self.points_left) > w_idx:
-                self.points_left[w_idx] = 0
+        # 4. MATCH STATUS
+        if "finished" in state_data: 
+            self.leg_finished = state_data["finished"]
+        if "gameFinished" in state_data: 
+            self.match_finished = state_data["gameFinished"]
         
-        gw_idx = state_data.get("gameWinner", -1)
-        if self.match_finished and isinstance(gw_idx, int) and 0 <= gw_idx < len(self.players):
-            self.match_winner_name = self.players[gw_idx]
+        if "winner" in state_data:
+            w_idx = state_data["winner"]
+            if self.leg_finished and isinstance(w_idx, int) and 0 <= w_idx < len(self.players):
+                self.leg_winner_name = self.players[w_idx]
+                if self.variant == "X01" and len(self.points_left) > w_idx:
+                    self.points_left[w_idx] = 0
+                    
+        if "gameWinner" in state_data:
+            gw_idx = state_data["gameWinner"]
+            if self.match_finished and isinstance(gw_idx, int) and 0 <= gw_idx < len(self.players):
+                self.match_winner_name = self.players[gw_idx]
 
     def get_player_name(self, idx):
         return self.players[idx] if len(self.players) > idx else "Unknown"
