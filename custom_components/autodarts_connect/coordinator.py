@@ -133,8 +133,22 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                                 
                                 self.data.update_from_state(data)
                                 
+                                # NEU: Prüfen, ob der aktuelle Spieler lokal ist
+                                players = data.get("players", [])
+                                if isinstance(players, list) and len(players) > self.data.current_player_idx:
+                                    current_player_data = players[self.data.current_player_idx]
+                                    if isinstance(current_player_data, dict):
+                                        self.data.current_player_is_local = (current_player_data.get("boardId") == self.board_id)
+                                    else:
+                                        self.data.current_player_is_local = False
+                                else:
+                                    self.data.current_player_is_local = False
+                                
                                 if self.data.current_player_idx != old_player:
-                                    self.hass.bus.async_fire("autodarts_turn_started", {"player": self.data.get_player_name(self.data.current_player_idx)})
+                                    self.hass.bus.async_fire("autodarts_turn_started", {
+                                        "player": self.data.get_player_name(self.data.current_player_idx),
+                                        "is_local": self.data.current_player_is_local
+                                    })
                                 if self.data.leg_finished and not old_finished:
                                     self.hass.bus.async_fire("autodarts_leg_won", {"winner": self.data.leg_winner_name})
                                 if self.data.is_busted and not old_busted:
