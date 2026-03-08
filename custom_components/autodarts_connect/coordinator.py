@@ -78,70 +78,79 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                                 payload = json.loads(msg.data)
                             except json.JSONDecodeError:
                                 continue
-                                
-                            channel = payload.get("channel")
-                            topic = payload.get("topic", "")
-                            data = payload.get("data", {})
                             
-                            # 1. BOARD EVENTS
-                            if channel == "autodarts.boards" and topic.endswith(".events"):
-                                event = data.get("event")
-                                if event == "Throw detected":
-                                    seg = data.get("throw", {}).get("segment", {})
-                                    self.hass.bus.async_fire("autodarts_throw", {
-                                        "player": self.data.get_player_name(self.data.current_player_idx),
-                                        "segment": seg.get("name", "Miss")
-                                    })
-                                    self.data.board_status = "Throwing"
-                                    self.async_set_updated_data(self.data)
-                                elif event in ["Takeout started", "Takeout finished", "Manual reset", "Started"]:
-                                    self.data.board_status = event
-                                    self.async_set_updated_data(self.data)
+                            # Zusätzlicher try-Block, damit ein kaputtes Feld nicht den WebSocket crasht
+                            try:
+                                channel = payload.get("channel")
+                                topic = payload.get("topic", "")
+                                data = payload.get("data", {})
+                                
+                                # 1. BOARD EVENTS
+                                if channel == "autodarts.boards" and topic.endswith(".events"):
+                                    event = data.get("event")
+                                    if event == "Throw detected":
+                                        seg = data.get("throw", {}).get("segment", {})
+                                        self.hass.bus.async_fire("autodarts_throw", {
+                                            "player": self.data.get_player_name(self.data.current_player_idx),
+                                            "segment": seg.get("name", "Miss")
+                                        })
+                                        self.data.board_status = "Throwing"
+                                        self.async_set_updated_data(self.data)
+                                    elif event in ["Takeout started", "Takeout finished", "Manual reset", "Started"]:
+                                        self.data.board_status = event
+                                        self.async_set_updated_data(self.data)
 
-                            # 2. MATCH LEBENSZYKLUS
-                            elif channel == "autodarts.boards" and topic.endswith(".matches"):
-                                ev = data.get("event")
-                                if ev == "start":
-                                    # State komplett resetten, damit keine alten Daten blockieren
-                                    self.data = MatchState(self.board_id)
-                                    self.data.match_id = data.get("id")
-                                    self.hass.bus.async_fire("autodarts_match_started", {"board": self.board_id})
+                                # 2. MATCH LEBENSZYKLUS
+                                elif channel == "autodarts.boards" and topic.endswith(".matches"):
+                                    ev = data.get("event")
+                                    if ev == "start":
+                                        self.data = MatchState(self.board_id)
+                                        self.data.match_id = data.get("id")
+                                        self.hass.bus.async_fire("autodarts_match_started", {"board": self.board_id})
+                                        
+                                        initial_state = await self.api.fetch_initial_match_state(self.data.match_id, token)
+                                        if initial_state:
+                                            self.data.update_from_state(initial_state)
+                                            self.hass.bus.async_fire("autodarts_turn_started", {
+                                                "player": self.data.get_player_name(self.data.current_player_idx),
+                                                "is_local": self.data.current_player_is_local
+                                            })
+                                            self.async_set_updated_data(self.data)
+                                            
+                                        await ws.send_json({"channel": "autodarts.matches", "type": "subscribe", "topic": f"{self.data.match_id}.state"})
                                     
-                                    initial_state = await self.api.fetch_initial_match_state(self.data.match_id, token)
-                                    if initial_state:
-                                        self.data.update_from_state(initial_state)
-                                        # FEUER: Garantiert, dass Node-RED & Sensoren das erste Update sofort bekommen!
+                                    elif ev == "delete":
+                                        # FIX: Nur beim manuellen Abbruch löschen wir das Dashboard
+                                        self.hass.bus.async_fire("autodarts_match_finished", {"board": self.board_id})
+                                        self.data = MatchState(self.board_id)
+                                        self.async_set_updated_data(self.data)
+                                        
+                                    elif ev == "finish":
+                                        # FIX: Bei regulärem Sieg lassen wir self.data bestehen! 
+                                        # So bleiben der Gewinner und die Endstände sichtbar.
+                                        self.hass.bus.async_fire("autodarts_match_finished", {"board": self.board_id})
+
+                                # 3. MATCH STATE UPDATES
+                                elif channel == "autodarts.matches" and topic.endswith(".state"):
+                                    old_finished = self.data.leg_finished
+                                    old_busted = self.data.is_busted
+                                    old_player = self.data.current_player_idx
+                                    
+                                    self.data.update_from_state(data)
+                                    
+                                    if self.data.current_player_idx != old_player:
                                         self.hass.bus.async_fire("autodarts_turn_started", {
                                             "player": self.data.get_player_name(self.data.current_player_idx),
                                             "is_local": self.data.current_player_is_local
                                         })
-                                        self.async_set_updated_data(self.data)
-                                        
-                                    await ws.send_json({"channel": "autodarts.matches", "type": "subscribe", "topic": f"{self.data.match_id}.state"})
-                                elif ev == "delete" or ev == "finish":
-                                    self.hass.bus.async_fire("autodarts_match_finished", {"board": self.board_id})
-                                    self.data = MatchState(self.board_id)
+                                    if self.data.leg_finished and not old_finished:
+                                        self.hass.bus.async_fire("autodarts_leg_won", {"winner": self.data.leg_winner_name})
+                                    if self.data.is_busted and not old_busted:
+                                        self.hass.bus.async_fire("autodarts_busted", {"player": self.data.get_player_name(self.data.current_player_idx)})
+                                    
                                     self.async_set_updated_data(self.data)
-
-                            # 3. MATCH STATE UPDATES
-                            elif channel == "autodarts.matches" and topic.endswith(".state"):
-                                old_finished = self.data.leg_finished
-                                old_busted = self.data.is_busted
-                                old_player = self.data.current_player_idx
-                                
-                                self.data.update_from_state(data)
-                                
-                                if self.data.current_player_idx != old_player:
-                                    self.hass.bus.async_fire("autodarts_turn_started", {
-                                        "player": self.data.get_player_name(self.data.current_player_idx),
-                                        "is_local": self.data.current_player_is_local
-                                    })
-                                if self.data.leg_finished and not old_finished:
-                                    self.hass.bus.async_fire("autodarts_leg_won", {"winner": self.data.leg_winner_name})
-                                if self.data.is_busted and not old_busted:
-                                    self.hass.bus.async_fire("autodarts_busted", {"player": self.data.get_player_name(self.data.current_player_idx)})
-                                
-                                self.async_set_updated_data(self.data)
+                            except Exception as e:
+                                _LOGGER.error("Interner Fehler bei der WS-Verarbeitung: %s", e)
                                 
             except asyncio.CancelledError:
                 raise
