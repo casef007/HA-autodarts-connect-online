@@ -118,7 +118,7 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                                     if initial_state:
                                         self.data.update_from_state(initial_state)
                                         
-                                        # NEU: Prüfen, ob der Start-Spieler lokal ist!
+                                        # Prüfen, ob der Start-Spieler lokal ist!
                                         players = initial_state.get("players", [])
                                         if isinstance(players, list) and len(players) > self.data.current_player_idx:
                                             current_player_data = players[self.data.current_player_idx]
