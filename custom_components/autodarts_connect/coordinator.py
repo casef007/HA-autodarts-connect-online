@@ -54,6 +54,17 @@ class AutodartsCoordinator(DataUpdateCoordinator):
             except asyncio.CancelledError:
                 pass
 
+    async def _async_fetch_initial_state(self, match_id, token):
+        """Hintergrund-Task: Lädt die Startdaten, OHNE den WebSocket zu blockieren!"""
+        initial_state = await self.api.fetch_initial_match_state(match_id, token)
+        if initial_state and self.data.match_id == match_id:
+            self.data.update_from_state(initial_state)
+            self.hass.bus.async_fire("autodarts_turn_started", {
+                "player": self.data.get_player_name(self.data.current_player_idx),
+                "is_local": self.data.current_player_is_local
+            })
+            self.async_set_updated_data(self.data)
+
     async def _websocket_listener(self):
         while True:
             token = await self.api.get_access_token()
@@ -79,7 +90,6 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                             except json.JSONDecodeError:
                                 continue
                             
-                            # Zusätzlicher try-Block, damit ein kaputtes Feld nicht den WebSocket crasht
                             try:
                                 channel = payload.get("channel")
                                 topic = payload.get("topic", "")
@@ -108,26 +118,21 @@ class AutodartsCoordinator(DataUpdateCoordinator):
                                         self.data.match_id = data.get("id")
                                         self.hass.bus.async_fire("autodarts_match_started", {"board": self.board_id})
                                         
-                                        initial_state = await self.api.fetch_initial_match_state(self.data.match_id, token)
-                                        if initial_state:
-                                            self.data.update_from_state(initial_state)
-                                            self.hass.bus.async_fire("autodarts_turn_started", {
-                                                "player": self.data.get_player_name(self.data.current_player_idx),
-                                                "is_local": self.data.current_player_is_local
-                                            })
-                                            self.async_set_updated_data(self.data)
-                                            
+                                        # SOFORT subscriben!
                                         await ws.send_json({"channel": "autodarts.matches", "type": "subscribe", "topic": f"{self.data.match_id}.state"})
-                                    
+                                        
+                                        # REST API im Hintergrund starten (Blockiert nicht mehr!)
+                                        self.hass.async_create_background_task(
+                                            self._async_fetch_initial_state(self.data.match_id, token),
+                                            f"autodarts_fetch_{self.data.match_id}"
+                                        )
+                                        
                                     elif ev == "delete":
-                                        # FIX: Nur beim manuellen Abbruch löschen wir das Dashboard
                                         self.hass.bus.async_fire("autodarts_match_finished", {"board": self.board_id})
                                         self.data = MatchState(self.board_id)
                                         self.async_set_updated_data(self.data)
                                         
                                     elif ev == "finish":
-                                        # FIX: Bei regulärem Sieg lassen wir self.data bestehen! 
-                                        # So bleiben der Gewinner und die Endstände sichtbar.
                                         self.hass.bus.async_fire("autodarts_match_finished", {"board": self.board_id})
 
                                 # 3. MATCH STATE UPDATES
